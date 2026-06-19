@@ -1,0 +1,98 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model Room {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  roomCode  String // short human-readable code e.g. "abc123"
+  videoId   String // YouTube video ID e.g. "dQw4w9WgXcQ"
+  videoUrl  String? // full YouTube URL (optional, for display)
+  hostId    String // userId of the room creator
+  createdAt DateTime @default(now())
+  expiresAt DateTime // set to createdAt + 24h in application logic
+
+  // Relations
+  state        RoomState?
+  participants Participant[]
+  transferLogs HostTransferLog[]
+
+  @@index([roomCode])
+  @@index([hostId])
+  @@index([expiresAt]) // for cleanup queries
+}
+
+// ─────────────────────────────────────────────
+// RoomState — live sync snapshot
+// Updated every 5s via host heartbeat
+// ─────────────────────────────────────────────
+model RoomState {
+  id           String   @id @default(auto()) @map("_id") @db.ObjectId
+  roomId       String   @db.ObjectId // 1:1 with Room
+  currentTime  Float    @default(0) // playback position in seconds
+  playing      Boolean  @default(false)
+  playbackRate Float    @default(1.0)
+  hostId       String // current host's userId
+  updatedAt    DateTime @updatedAt
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId]) // enforce 1:1 relationship
+  @@index([updatedAt])
+}
+
+// ─────────────────────────────────────────────
+// Participant — active session presence
+// Cleaned up on socket disconnect
+// ─────────────────────────────────────────────
+model Participant {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  roomId    String   @db.ObjectId // 1:1 with Room
+  userId    String
+  socketId  String   @unique // Socket.IO socket ID
+  joinedAt  DateTime @default(now())
+  isHost    Boolean  @default(false)
+  expiresAt DateTime // safety net for orphaned records
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId]) // one session per user per room
+  @@index([roomId])
+  @@index([roomId, isHost]) // fast host lookup
+  @@index([roomId, joinedAt]) // oldest-participant host transfer
+}
+
+// ─────────────────────────────────────────────
+// HostTransferLog — audit trail for host changes
+// Useful for debugging sync and replay
+// ─────────────────────────────────────────────
+model HostTransferLog {
+  id            String             @id @default(auto()) @map("_id") @db.ObjectId
+  roomId        String             @db.ObjectId // 1:1 with Room
+  prevHostId    String? // null if first host
+  newHostId     String
+  reason        HostTransferReason
+  snapshotTime  Float // currentTime at moment of transfer
+  transferredAt DateTime           @default(now())
+
+  room Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, transferredAt(sort: Desc)])
+}
+
+enum HostTransferReason {
+  DISCONNECT
+  MANUAL // future: host voluntarily passes control
+  INACTIVITY // future: host idle too long
+}
