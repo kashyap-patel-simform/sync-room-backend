@@ -2,6 +2,15 @@
 import { Socket } from 'socket.io';
 import { fetchParticipants } from '../../lib/participant';
 import { prisma } from '../../lib/prisma';
+import {
+  evictRoom,
+  getPlayingState,
+  persistRoomState,
+  resolveRoomId,
+  schedulePersist,
+  updateCache,
+  warmCache,
+} from '../../lib/roomStateCache';
 import { events } from '../../utils/events';
 
 export function registerRoomHandlers(socket: Socket) {
@@ -64,6 +73,15 @@ export function registerRoomHandlers(socket: Socket) {
             participants: true,
           },
         });
+
+        if (updatedRoom?.state) {
+          warmCache(roomCode, {
+            roomId: room.id,
+            playing: updatedRoom.state.playing,
+            currentTime: updatedRoom.state.currentTime,
+          });
+        }
+
         // fetch the updated participant list (now includes the new user)
         const participants = await fetchParticipants(room.id);
 
@@ -126,6 +144,10 @@ export function registerRoomHandlers(socket: Socket) {
 
       const participants = await fetchParticipants(room?.id);
 
+      if (participants.length === 0) {
+        evictRoom(roomCode);
+      }
+
       socket.to(roomCode).emit(events.USER_LEFT, {
         userId,
         userName: deletedParticipant.userName,
@@ -165,30 +187,16 @@ export function registerRoomHandlers(socket: Socket) {
           error: 'Timestamp not provided.',
         });
       }
-      const room = await prisma.room.findUnique({
-        where: { roomCode },
-      });
 
-      if (!room) {
-        return callback({
-          success: false,
-          error: 'Wrong room code',
-        });
+      const roomId = await resolveRoomId(roomCode);
+      if (!roomId) {
+        return callback({ success: false, error: 'Wrong room code' });
       }
 
-      await prisma.roomState.update({
-        where: { roomId: room.id },
-        data: {
-          playing: true,
-          currentTime: timestamp,
-          updatedAt: new Date(),
-        },
-      });
+      updateCache(roomCode, { roomId, playing: true, currentTime: timestamp });
+      socket.to(roomCode).emit(events.VIDEO_PLAY, { roomCode, timestamp });
+      void persistRoomState(roomId, { playing: true, currentTime: timestamp });
 
-      socket.to(roomCode).emit(events.VIDEO_PLAY, {
-        roomCode,
-        timestamp,
-      });
       return true;
     },
   );
@@ -220,30 +228,15 @@ export function registerRoomHandlers(socket: Socket) {
         });
       }
 
-      const room = await prisma.room.findUnique({
-        where: { roomCode },
-      });
-
-      if (!room) {
-        return callback({
-          success: false,
-          error: 'Wrong room code',
-        });
+      const roomId = await resolveRoomId(roomCode);
+      if (!roomId) {
+        return callback({ success: false, error: 'Wrong room code' });
       }
 
-      await prisma.roomState.update({
-        where: { roomId: room.id },
-        data: {
-          playing: false,
-          currentTime: timestamp,
-          updatedAt: new Date(),
-        },
-      });
+      updateCache(roomCode, { roomId, playing: false, currentTime: timestamp });
+      socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
+      void persistRoomState(roomId, { playing: false, currentTime: timestamp });
 
-      socket.to(roomCode).emit(events.VIDEO_PAUSE, {
-        roomCode,
-        timestamp,
-      });
       return true;
     },
   );
@@ -275,30 +268,16 @@ export function registerRoomHandlers(socket: Socket) {
         });
       }
 
-      const room = await prisma.room.findUnique({
-        where: { roomCode },
-      });
-
-      if (!room) {
-        return callback({
-          success: false,
-          error: 'Wrong room code',
-        });
+      const roomId = await resolveRoomId(roomCode);
+      if (!roomId) {
+        return callback({ success: false, error: 'Wrong room code' });
       }
 
-      await prisma.roomState.update({
-        where: { roomId: room.id },
-        data: {
-          playing: false,
-          currentTime: timestamp,
-          updatedAt: new Date(),
-        },
-      });
+      const playing = getPlayingState(roomCode);
+      updateCache(roomCode, { roomId, playing, currentTime: timestamp });
+      socket.to(roomCode).emit(events.VIDEO_SEEK, { roomCode, timestamp });
+      schedulePersist(roomCode, roomId, { playing, currentTime: timestamp });
 
-      socket.to(roomCode).emit(events.VIDEO_SEEK, {
-        roomCode,
-        timestamp,
-      });
       return true;
     },
   );
