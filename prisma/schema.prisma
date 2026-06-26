@@ -17,9 +17,11 @@ datasource db {
 model Room {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   roomCode  String // short human-readable code e.g. "abc123"
+  roomName  String
   videoId   String // YouTube video ID e.g. "dQw4w9WgXcQ"
   videoUrl  String? // full YouTube URL (optional, for display)
   hostId    String // userId of the room creator
+  hostName  String
   createdAt DateTime @default(now())
   expiresAt DateTime // set to createdAt + 24h in application logic
 
@@ -28,7 +30,7 @@ model Room {
   participants Participant[]
   transferLogs HostTransferLog[]
 
-  @@index([roomCode])
+  @@unique([roomCode])
   @@index([hostId])
   @@index([expiresAt]) // for cleanup queries
 }
@@ -60,6 +62,7 @@ model Participant {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   roomId    String   @db.ObjectId // 1:1 with Room
   userId    String
+  userName  String
   socketId  String   @unique // Socket.IO socket ID
   joinedAt  DateTime @default(now())
   isHost    Boolean  @default(false)

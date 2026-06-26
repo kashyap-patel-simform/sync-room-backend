@@ -1,15 +1,21 @@
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 
 export interface AppError extends Error {
-  staus?: number;
+  status?: number;
 }
 
-export const errorHandler = (err: AppError, req: Request, res: Response) => {
+export const errorHandler = (
+  err: AppError,
+  req: Request,
+  res: Response,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  next: NextFunction,
+) => {
   // log the error to the console for debugging purposes
   console.log(err);
 
-  res.status(err.staus || 500).json({
+  res.status(err.status || 500).json({
     message: err.message || 'Internal Server Error',
-    status: err.staus || 500,
+    status: err.status || 500,
   });
 };

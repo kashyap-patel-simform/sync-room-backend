@@ -1,20 +1,17 @@
 import express from 'express';
-import itemRoutes from './routes/itemRoutes';
 import { errorHandler } from './middlewares/errorHandlers';
+import roomRoutes from './routes/roomRoutes';
+import cors from 'cors';
 
 const app = express();
 
 app.use(express.json());
+app.use(cors());
 
 // Routes
-app.use('/api/items', itemRoutes);
+app.use('/api/room', roomRoutes);
 
 // Global error handler (should be after routes)
 app.use(errorHandler);
-
-// Root route
-app.get('/', (_, res) => {
-  res.send('Welcome to the Item API');
-});
 
 export default app;
