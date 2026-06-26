@@ -13,4 +13,8 @@ export const events = {
   VIDEO_PLAY: 'video_played',
   VIDEO_PAUSE: 'video_paused',
   VIDEO_SEEK: 'video_seeked',
+
+  HOST_HEARBEAT: 'host_heartbeat',
+
+  SYNC_TICK: 'sync_tick',
 };

@@ -1,6 +1,7 @@
 import { NextFunction, Request, Response } from 'express';
-import { extractIdFromYoutubeUrl, generateRoomCode } from '../utils/roomCode';
+import { extractIdFromYoutubeUrl, generateRoomCode } from '../utils/room';
 import { prisma } from '../lib/prisma';
+import { warmCache } from '../lib/roomStateCache';
 
 export const createRoom = async (
   req: Request,
@@ -63,6 +64,12 @@ export const createRoom = async (
         state: true,
         participants: true,
       },
+    });
+
+    warmCache(roomCode, {
+      roomId: room.id,
+      playing: false,
+      currentTime: 0,
     });
 
     return res.status(201).json({

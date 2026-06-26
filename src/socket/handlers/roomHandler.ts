@@ -5,13 +5,13 @@ import { prisma } from '../../lib/prisma';
 import {
   evictRoom,
   getPlayingState,
-  persistRoomState,
   resolveRoomId,
   schedulePersist,
   updateCache,
   warmCache,
 } from '../../lib/roomStateCache';
 import { events } from '../../utils/events';
+import { getCurrentPlaybackPosition } from '../../utils/room';
 
 export function registerRoomHandlers(socket: Socket) {
   // JOIN ROOM
@@ -75,27 +75,37 @@ export function registerRoomHandlers(socket: Socket) {
         });
 
         if (updatedRoom?.state) {
+          const currentTime = getCurrentPlaybackPosition(updatedRoom?.state);
+
           warmCache(roomCode, {
             roomId: room.id,
             playing: updatedRoom.state.playing,
-            currentTime: updatedRoom.state.currentTime,
+            currentTime,
+          });
+
+          socket.emit(events.SYNC_TICK, {
+            playing: updatedRoom.state.playing,
+            currentTime,
+          });
+
+          // broadcast USER_JOINED to everyone else
+          socket.to(roomCode).emit(events.USER_JOINED, {
+            userId,
+            userName,
+            participants: updatedRoom?.participants,
+          });
+
+          callback({
+            success: true,
+            data: {
+              ...updatedRoom,
+              state: {
+                ...updatedRoom?.state,
+                currentTime: getCurrentPlaybackPosition(updatedRoom?.state),
+              },
+            },
           });
         }
-
-        // fetch the updated participant list (now includes the new user)
-        const participants = await fetchParticipants(room.id);
-
-        // broadcast USER_JOINED to everyone else
-        socket.to(roomCode).emit(events.USER_JOINED, {
-          userId,
-          userName,
-          participants,
-        });
-
-        callback({
-          success: true,
-          data: updatedRoom,
-        });
       } catch (err) {
         console.error(err);
         callback({ sucess: false, error: 'Failed to join the room' });
@@ -182,10 +192,7 @@ export function registerRoomHandlers(socket: Socket) {
       }
 
       if (timestamp === undefined) {
-        return callback({
-          success: false,
-          error: 'Timestamp not provided.',
-        });
+        return false;
       }
 
       const roomId = await resolveRoomId(roomCode);
@@ -195,7 +202,11 @@ export function registerRoomHandlers(socket: Socket) {
 
       updateCache(roomCode, { roomId, playing: true, currentTime: timestamp });
       socket.to(roomCode).emit(events.VIDEO_PLAY, { roomCode, timestamp });
-      void persistRoomState(roomId, { playing: true, currentTime: timestamp });
+
+      schedulePersist(roomCode, roomId, {
+        playing: true,
+        currentTime: timestamp,
+      });
 
       return true;
     },
@@ -235,7 +246,11 @@ export function registerRoomHandlers(socket: Socket) {
 
       updateCache(roomCode, { roomId, playing: false, currentTime: timestamp });
       socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
-      void persistRoomState(roomId, { playing: false, currentTime: timestamp });
+
+      schedulePersist(roomCode, roomId, {
+        playing: false,
+        currentTime: timestamp,
+      });
 
       return true;
     },
@@ -279,6 +294,32 @@ export function registerRoomHandlers(socket: Socket) {
       schedulePersist(roomCode, roomId, { playing, currentTime: timestamp });
 
       return true;
+    },
+  );
+
+  // HEARTBEAT
+  socket.on(
+    'host_heartbeat',
+    async ({
+      roomCode,
+      timestamp,
+      playing,
+    }: {
+      roomCode: string;
+      timestamp: number;
+      playing: boolean;
+    }) => {
+      const roomId = await resolveRoomId(roomCode);
+
+      if (!roomId) {
+        return false;
+      }
+
+      updateCache(roomCode, {
+        roomId,
+        currentTime: timestamp,
+        playing,
+      });
     },
   );
 }

@@ -20,7 +20,7 @@ interface CachedRoomState {
  * Key: roomCode
  * Value: CachedRoomState
  */
-const roomStateCache = new Map<string, CachedRoomState>();
+export const roomStateCache = new Map<string, CachedRoomState>();
 
 /**
  * Stores debounce timers for each room.
@@ -100,6 +100,18 @@ export function updateCache(
  */
 export function getPlayingState(roomCode: string): boolean {
   return roomStateCache.get(roomCode)?.playing ?? false;
+}
+
+/**
+ * Returns the current timestamp of video.
+ *
+ * If the room is not cached, 0 is returned.
+ *
+ * @param roomCode - Human-readable room code.
+ * @returns timestamp if video exists, otherwise 0.
+ */
+export function getCurrentTimestamp(roomCode: string): number {
+  return roomStateCache.get(roomCode)?.currentTime ?? 0;
 }
 
 /**
