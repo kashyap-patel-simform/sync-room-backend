@@ -7,7 +7,7 @@
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
-    "build": "npx prisma generate && tsc",
+    "build": "npx prisma generate && tsup src/server.ts --format esm --out-dir dist --no-splitting",
     "start": "node dist/server.js",
     "dev": "nodemon --watch 'src/**/*.ts' --exec 'tsx' src/server.ts",
     "lint": "eslint 'src/**/*.ts'",
@@ -25,6 +25,7 @@
     "prettier": "^3.8.4",
     "prisma": "^6.19.3",
     "ts-node": "^10.9.2",
+    "tsup": "^8.5.1",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.61.1"
