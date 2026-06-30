@@ -30,11 +30,8 @@ export function registerRoomHandlers(socket: Socket) {
       callback: Function,
     ) => {
       try {
-        // find the room with the given roomCode
         const room = await prisma.room.findUnique({
-          where: {
-            roomCode,
-          },
+          where: { roomCode },
           include: {
             state: true,
             participants: true,
@@ -46,13 +43,11 @@ export function registerRoomHandlers(socket: Socket) {
         }
 
         if (room.expiresAt < new Date()) {
-          return callback({ success: false, error: 'Room experies' });
+          return callback({ success: false, error: 'Room has expired' });
         }
 
-        // join the socket room
         socket.join(roomCode);
 
-        // upsert the joining participant so they appear in the list
         await prisma.participant.upsert({
           where: { roomId_userId: { roomId: room.id, userId } },
           update: { socketId: socket.id, userName },
@@ -61,7 +56,7 @@ export function registerRoomHandlers(socket: Socket) {
             userId,
             userName,
             socketId: socket.id,
-            isHost: userId === room?.hostId,
+            isHost: userId === room.hostId,
             expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
           },
         });
@@ -74,41 +69,43 @@ export function registerRoomHandlers(socket: Socket) {
           },
         });
 
-        if (updatedRoom?.state) {
-          const currentTime = getCurrentPlaybackPosition(updatedRoom?.state);
-
-          warmCache(roomCode, {
-            roomId: room.id,
-            playing: updatedRoom.state.playing,
-            currentTime,
-          });
-
-          socket.emit(events.SYNC_TICK, {
-            playing: updatedRoom.state.playing,
-            currentTime,
-          });
-
-          // broadcast USER_JOINED to everyone else
-          socket.to(roomCode).emit(events.USER_JOINED, {
-            userId,
-            userName,
-            participants: updatedRoom?.participants,
-          });
-
-          callback({
-            success: true,
-            data: {
-              ...updatedRoom,
-              state: {
-                ...updatedRoom?.state,
-                currentTime: getCurrentPlaybackPosition(updatedRoom?.state),
-              },
-            },
-          });
+        if (!updatedRoom?.state) {
+          return callback({ success: false, error: 'Room state unavailable' });
         }
+
+        // Compute once and reuse to keep cache and callback in sync
+        const currentTime = getCurrentPlaybackPosition(updatedRoom.state);
+
+        warmCache(roomCode, {
+          roomId: room.id,
+          playing: updatedRoom.state.playing,
+          currentTime,
+        });
+
+        socket.emit(events.SYNC_TICK, {
+          playing: updatedRoom.state.playing,
+          currentTime,
+        });
+
+        socket.to(roomCode).emit(events.USER_JOINED, {
+          userId,
+          userName,
+          participants: updatedRoom.participants,
+        });
+
+        callback({
+          success: true,
+          data: {
+            ...updatedRoom,
+            state: {
+              ...updatedRoom.state,
+              currentTime,
+            },
+          },
+        });
       } catch (err) {
         console.error(err);
-        callback({ sucess: false, error: 'Failed to join the room' });
+        callback({ success: false, error: 'Failed to join the room' });
       }
     },
   );
@@ -120,54 +117,51 @@ export function registerRoomHandlers(socket: Socket) {
       { roomCode, userId }: { roomCode: string; userId: string },
       callback: Function,
     ) => {
-      if (!roomCode)
-        return callback({
-          success: false,
-          error: 'Room Code not found.',
+      try {
+        if (!roomCode) {
+          return callback({ success: false, error: 'Room Code not found.' });
+        }
+
+        if (!userId) {
+          return callback({ success: false, error: 'User not found.' });
+        }
+
+        const room = await prisma.room.findUnique({
+          where: { roomCode },
         });
 
-      if (!userId)
-        return callback({
-          success: false,
-          error: 'User not found.',
-        });
+        if (!room) {
+          return callback({ success: false, error: 'Room not found.' });
+        }
 
-      const room = await prisma.room.findUnique({
-        where: { roomCode },
-      });
-
-      if (!room) {
-        return callback({
-          success: false,
-          error: 'Room not found.',
-        });
-      }
-
-      const deletedParticipant = await prisma.participant.delete({
-        where: {
-          roomId_userId: {
-            roomId: room?.id,
-            userId: userId,
+        const deletedParticipant = await prisma.participant.delete({
+          where: {
+            roomId_userId: {
+              roomId: room.id,
+              userId,
+            },
           },
-        },
-      });
+        });
 
-      const participants = await fetchParticipants(room?.id);
+        const participants = await fetchParticipants(room.id);
 
-      if (participants.length === 0) {
-        evictRoom(roomCode);
+        if (participants.length === 0) {
+          evictRoom(roomCode);
+        }
+
+        socket.leave(roomCode);
+
+        socket.to(roomCode).emit(events.USER_LEFT, {
+          userId,
+          userName: deletedParticipant.userName,
+          participants,
+        });
+
+        return callback({ success: true, message: 'User left successfully' });
+      } catch (err) {
+        console.error(err);
+        callback({ success: false, error: 'Failed to leave the room' });
       }
-
-      socket.to(roomCode).emit(events.USER_LEFT, {
-        userId,
-        userName: deletedParticipant.userName,
-        participants,
-      });
-
-      return callback({
-        success: false,
-        error: 'User Leaved Successfully',
-      });
     },
   );
 
@@ -182,22 +176,19 @@ export function registerRoomHandlers(socket: Socket) {
         roomCode: string;
         timestamp: number;
       },
-      callback: Function,
+      callback: (res: { success: boolean; error?: string }) => void,
     ) => {
       if (!roomCode) {
-        return callback({
-          success: false,
-          error: 'Room Code not found.',
-        });
+        return callback?.({ success: false, error: 'Room Code not found.' });
       }
 
       if (timestamp === undefined) {
-        return false;
+        return callback?.({ success: false, error: 'Timestamp not provided.' });
       }
 
       const roomId = await resolveRoomId(roomCode);
       if (!roomId) {
-        return callback({ success: false, error: 'Wrong room code' });
+        return callback?.({ success: false, error: 'Wrong room code' });
       }
 
       updateCache(roomCode, { roomId, playing: true, currentTime: timestamp });
@@ -208,7 +199,7 @@ export function registerRoomHandlers(socket: Socket) {
         currentTime: timestamp,
       });
 
-      return true;
+      return callback?.({ success: true });
     },
   );
 
@@ -223,25 +214,19 @@ export function registerRoomHandlers(socket: Socket) {
         roomCode: string;
         timestamp: number;
       },
-      callback: Function,
+      callback: (res: { success: boolean; error?: string }) => void,
     ) => {
       if (!roomCode) {
-        return callback({
-          success: false,
-          error: 'Room Code not found.',
-        });
+        return callback?.({ success: false, error: 'Room Code not found.' });
       }
 
       if (timestamp === undefined) {
-        return callback({
-          success: false,
-          error: 'Timestamp not provided.',
-        });
+        return callback?.({ success: false, error: 'Timestamp not provided.' });
       }
 
       const roomId = await resolveRoomId(roomCode);
       if (!roomId) {
-        return callback({ success: false, error: 'Wrong room code' });
+        return callback?.({ success: false, error: 'Wrong room code' });
       }
 
       updateCache(roomCode, { roomId, playing: false, currentTime: timestamp });
@@ -252,7 +237,7 @@ export function registerRoomHandlers(socket: Socket) {
         currentTime: timestamp,
       });
 
-      return true;
+      return callback?.({ success: true });
     },
   );
 
@@ -267,25 +252,19 @@ export function registerRoomHandlers(socket: Socket) {
         roomCode: string;
         timestamp: number;
       },
-      callback: Function,
+      callback: (res: { success: boolean; error?: string }) => void,
     ) => {
       if (!roomCode) {
-        return callback({
-          success: false,
-          error: 'Room Code not found.',
-        });
+        return callback?.({ success: false, error: 'Room Code not found.' });
       }
 
       if (timestamp === undefined) {
-        return callback({
-          success: false,
-          error: 'Timestamp not provided.',
-        });
+        return callback?.({ success: false, error: 'Timestamp not provided.' });
       }
 
       const roomId = await resolveRoomId(roomCode);
       if (!roomId) {
-        return callback({ success: false, error: 'Wrong room code' });
+        return callback?.({ success: false, error: 'Wrong room code' });
       }
 
       const playing = getPlayingState(roomCode);
@@ -293,13 +272,13 @@ export function registerRoomHandlers(socket: Socket) {
       socket.to(roomCode).emit(events.VIDEO_SEEK, { roomCode, timestamp });
       schedulePersist(roomCode, roomId, { playing, currentTime: timestamp });
 
-      return true;
+      return callback?.({ success: true });
     },
   );
 
   // HEARTBEAT
   socket.on(
-    'host_heartbeat',
+    events.HOST_HEARTBEAT,
     async ({
       roomCode,
       timestamp,
@@ -312,7 +291,7 @@ export function registerRoomHandlers(socket: Socket) {
       const roomId = await resolveRoomId(roomCode);
 
       if (!roomId) {
-        return false;
+        return;
       }
 
       updateCache(roomCode, {

@@ -24,7 +24,7 @@ export function getCurrentPlaybackPosition(state: RoomState): number {
     return state.currentTime;
   }
 
-  const elapsed = (Date.now() - state.updatedAt.getMilliseconds()) / 1000;
+  const elapsed = (Date.now() - state.updatedAt.getTime()) / 1000;
 
   return state.currentTime + elapsed;
 }

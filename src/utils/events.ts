@@ -14,7 +14,7 @@ export const events = {
   VIDEO_PAUSE: 'video_paused',
   VIDEO_SEEK: 'video_seeked',
 
-  HOST_HEARBEAT: 'host_heartbeat',
+  HOST_HEARTBEAT: 'host_heartbeat',
 
   SYNC_TICK: 'sync_tick',
 };

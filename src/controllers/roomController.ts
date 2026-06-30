@@ -11,60 +11,73 @@ export const createRoom = async (
   try {
     const { videoUrl, hostId, socketId, roomName, hostname } = req.body;
 
+    const videoId = extractIdFromYoutubeUrl(videoUrl);
+
+    if (!videoId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid YouTube URL. Could not extract video ID.',
+      });
+    }
+
     // Retry on roomCode collision (extremely rare with nanoid but safe)
     let roomCode = generateRoomCode();
     let attempts = 0;
 
-    const videoId = extractIdFromYoutubeUrl(videoUrl);
-
     while (
       await prisma.room.findUnique({
-        where: {
-          roomCode: roomCode,
-        },
+        where: { roomCode },
       })
     ) {
       if (++attempts > 5) throw new Error('ROOM_CODE_GENERATION_FAILED');
       roomCode = generateRoomCode();
     }
 
-    // Room expires after 24h to prevent stale rooms (can be extended on activity)
-    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // +24h
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
-    // create room, initial state, and host participant in a single transaction
-    const room = await prisma.room.create({
-      data: {
-        roomCode,
-        roomName,
-        videoId: videoId ?? '',
-        videoUrl,
-        hostId,
-        hostName: hostname,
-        expiresAt,
-
-        state: {
-          create: {
-            currentTime: 0,
-            playing: false,
-            hostId,
+    let room;
+    try {
+      room = await prisma.room.create({
+        data: {
+          roomCode,
+          roomName,
+          videoId,
+          videoUrl,
+          hostId,
+          hostName: hostname,
+          expiresAt,
+          state: {
+            create: {
+              currentTime: 0,
+              playing: false,
+              hostId,
+            },
+          },
+          participants: {
+            create: {
+              userId: hostId,
+              userName: hostname,
+              socketId,
+              isHost: true,
+              expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000),
+            },
           },
         },
-
-        participants: {
-          create: {
-            userId: hostId,
-            userName: hostname,
-            socketId: socketId, // will be updated on socket connection
-            isHost: true,
-            expiresAt: new Date(Date.now() + 2 * 60 * 60 * 1000), // +2h (session expires after 2h of inactivity)
-          },
+        include: {
+          state: true,
+          participants: true,
         },
-      },
-      include: {
-        state: true,
-        participants: true,
-      },
-    });
+      });
+    } catch (err: unknown) {
+      // P2002: unique constraint — room code was claimed between check and create
+      if (typeof err === 'object' && err !== null && (err as { code?: string }).code === 'P2002') {
+        return res.status(409).json({
+          success: false,
+          error: 'Room code collision. Please retry.',
+        });
+      }
+      throw err;
+    }
 
     warmCache(roomCode, {
       roomId: room.id,
@@ -92,7 +105,8 @@ export const getRoomByCode = async (
 
     if (!roomCode) {
       return res.status(400).json({
-        message: 'Room code is required',
+        success: false,
+        error: 'Room code is required',
       });
     }
 
@@ -105,7 +119,7 @@ export const getRoomByCode = async (
     });
 
     if (!room) {
-      return res.status(400).json({
+      return res.status(404).json({
         success: false,
         error: 'Room not found.',
       });

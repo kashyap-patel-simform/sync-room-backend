@@ -16,5 +16,5 @@ export interface RoomState {
 export interface Participant {
   roomId: string;
   userId: string;
-  socketId: Date;
+  socketId: string;
 }
