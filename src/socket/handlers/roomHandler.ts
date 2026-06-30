@@ -281,12 +281,14 @@ export function registerRoomHandlers(socket: Socket) {
     events.HOST_HEARTBEAT,
     async ({
       roomCode,
-      timestamp,
+      currentTimestamp,
       playing,
+      sync_all,
     }: {
       roomCode: string;
-      timestamp: number;
+      currentTimestamp: number;
       playing: boolean;
+      sync_all: boolean;
     }) => {
       const roomId = await resolveRoomId(roomCode);
 
@@ -294,9 +296,16 @@ export function registerRoomHandlers(socket: Socket) {
         return;
       }
 
+      if (sync_all) {
+        socket.to(roomCode).emit(events.SYNC_TICK, {
+          playing,
+          currentTime: currentTimestamp,
+        });
+      }
+
       updateCache(roomCode, {
         roomId,
-        currentTime: timestamp,
+        currentTime: currentTimestamp,
         playing,
       });
     },
