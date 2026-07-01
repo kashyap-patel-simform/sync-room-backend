@@ -283,12 +283,10 @@ export function registerRoomHandlers(socket: Socket) {
       roomCode,
       currentTimestamp,
       playing,
-      sync_all,
     }: {
       roomCode: string;
       currentTimestamp: number;
       playing: boolean;
-      sync_all: boolean;
     }) => {
       const roomId = await resolveRoomId(roomCode);
 
@@ -296,12 +294,10 @@ export function registerRoomHandlers(socket: Socket) {
         return;
       }
 
-      if (sync_all) {
-        socket.to(roomCode).emit(events.SYNC_TICK, {
-          playing,
-          currentTime: currentTimestamp,
-        });
-      }
+      socket.to(roomCode).emit(events.SYNC_TICK, {
+        playing,
+        currentTime: currentTimestamp,
+      });
 
       updateCache(roomCode, {
         roomId,
