@@ -15,6 +15,7 @@ export const events = {
   VIDEO_SEEK: 'video_seeked',
 
   HOST_HEARTBEAT: 'host_heartbeat',
+  HOST_CHANGED: 'host_changed',
 
   SYNC_TICK: 'sync_tick',
 };

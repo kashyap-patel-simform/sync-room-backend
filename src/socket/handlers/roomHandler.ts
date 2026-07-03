@@ -4,6 +4,7 @@ import { fetchParticipants } from '../../lib/participant';
 import { prisma } from '../../lib/prisma';
 import {
   evictRoom,
+  getCurrentTimestamp,
   getPlayingState,
   resolveRoomId,
   schedulePersist,
@@ -145,17 +146,62 @@ export function registerRoomHandlers(socket: Socket) {
 
         const participants = await fetchParticipants(room.id);
 
+        const timestamp = getCurrentTimestamp(roomCode);
+
+        // if Host leave the room
+        if (deletedParticipant.isHost) {
+          // pause the video first
+          socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
+
+          // check the participants length
+          if (participants.length > 0) {
+            // take the first participants as host
+            const newHost = participants[0];
+
+            await prisma.participant.update({
+              where: {
+                roomId_userId: {
+                  roomId: room.id,
+                  userId: newHost.userId,
+                },
+              },
+              data: {
+                isHost: true,
+              },
+            });
+
+            await prisma.room.update({
+              where: {
+                id: room.id,
+              },
+              data: {
+                hostId: newHost.userId,
+              },
+            });
+
+            socket.to(roomCode).emit(events.HOST_CHANGED, {
+              hostId: newHost.userId,
+              hostName: newHost.userName,
+            });
+          }
+        }
+
+        // if there is no participant left delete the cache and database
         if (participants.length === 0) {
           evictRoom(roomCode);
+          prisma.room.delete({
+            where: { roomCode },
+          });
         }
 
         socket.leave(roomCode);
 
-        socket.to(roomCode).emit(events.USER_LEFT, {
-          userId,
-          userName: deletedParticipant.userName,
-          participants,
-        });
+        if (!deletedParticipant.isHost)
+          socket.to(roomCode).emit(events.USER_LEFT, {
+            userId,
+            userName: deletedParticipant.userName,
+            participants,
+          });
 
         return callback({ success: true, message: 'User left successfully' });
       } catch (err) {
