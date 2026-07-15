@@ -18,4 +18,18 @@ export const events = {
   HOST_CHANGED: 'host_changed',
 
   SYNC_TICK: 'sync_tick',
+
+  // SFU (mediasoup) signaling — request/response, ack-callback style
+  GET_RTP_CAPABILITIES: 'get_rtp_capabilities',
+  GET_PRODUCERS: 'get_producers',
+  CREATE_TRANSPORT: 'create_transport',
+  CONNECT_TRANSPORT: 'connect_transport',
+  PRODUCE: 'produce',
+  CONSUME: 'consume',
+  RESUME_CONSUMER: 'resume_consumer',
+  CLOSE_PRODUCER: 'close_producer',
+
+  // SFU (mediasoup) notifications — broadcast to the rest of the room
+  NEW_PRODUCER: 'new_producer',
+  PRODUCER_CLOSED: 'producer_closed',
 };

@@ -13,6 +13,60 @@ import {
 } from '../../lib/roomStateCache';
 import { events } from '../../utils/events';
 import { getCurrentPlaybackPosition } from '../../utils/room';
+import { evictRoomSfu, removePeerSfu } from '../../lib/sfuState';
+
+/**
+ * Removes a participant from a room (Prisma row, SFU peer state, host
+ * migration if needed, room eviction if now empty) and broadcasts the
+ * appropriate events. Shared by the explicit LEAVE_ROOM handler and the
+ * socket 'disconnect' handler (tab close / crash — no leave_room is emitted).
+ */
+async function cleanupParticipant(
+  socket: Socket,
+  roomCode: string,
+  roomId: string,
+  deletedParticipant: { userId: string; userName: string; isHost: boolean },
+) {
+  const participants = await fetchParticipants(roomId);
+
+  removePeerSfu(roomCode, socket.id);
+
+  if (deletedParticipant.isHost) {
+    const timestamp = getCurrentTimestamp(roomCode);
+    socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
+
+    if (participants.length > 0) {
+      const newHost = participants[0];
+
+      await prisma.participant.update({
+        where: { roomId_userId: { roomId, userId: newHost.userId } },
+        data: { isHost: true },
+      });
+
+      await prisma.room.update({
+        where: { id: roomId },
+        data: { hostId: newHost.userId },
+      });
+
+      socket.to(roomCode).emit(events.HOST_CHANGED, {
+        hostId: newHost.userId,
+        hostName: newHost.userName,
+      });
+    }
+  }
+
+  if (participants.length === 0) {
+    evictRoom(roomCode);
+    evictRoomSfu(roomCode);
+    prisma.room.delete({ where: { roomCode } });
+  } else if (!deletedParticipant.isHost) {
+    socket.to(roomCode).emit(events.USER_LEFT, {
+      userId: deletedParticipant.userId,
+      userName: deletedParticipant.userName,
+      participants,
+    });
+  }
+}
 
 export function registerRoomHandlers(socket: Socket) {
   // JOIN ROOM
@@ -144,64 +198,9 @@ export function registerRoomHandlers(socket: Socket) {
           },
         });
 
-        const participants = await fetchParticipants(room.id);
-
-        const timestamp = getCurrentTimestamp(roomCode);
-
-        // if Host leave the room
-        if (deletedParticipant.isHost) {
-          // pause the video first
-          socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
-
-          // check the participants length
-          if (participants.length > 0) {
-            // take the first participants as host
-            const newHost = participants[0];
-
-            await prisma.participant.update({
-              where: {
-                roomId_userId: {
-                  roomId: room.id,
-                  userId: newHost.userId,
-                },
-              },
-              data: {
-                isHost: true,
-              },
-            });
-
-            await prisma.room.update({
-              where: {
-                id: room.id,
-              },
-              data: {
-                hostId: newHost.userId,
-              },
-            });
-
-            socket.to(roomCode).emit(events.HOST_CHANGED, {
-              hostId: newHost.userId,
-              hostName: newHost.userName,
-            });
-          }
-        }
-
-        // if there is no participant left delete the cache and database
-        if (participants.length === 0) {
-          evictRoom(roomCode);
-          prisma.room.delete({
-            where: { roomCode },
-          });
-        }
+        await cleanupParticipant(socket, roomCode, room.id, deletedParticipant);
 
         socket.leave(roomCode);
-
-        if (!deletedParticipant.isHost)
-          socket.to(roomCode).emit(events.USER_LEFT, {
-            userId,
-            userName: deletedParticipant.userName,
-            participants,
-          });
 
         return callback({ success: true, message: 'User left successfully' });
       } catch (err) {
@@ -352,4 +351,36 @@ export function registerRoomHandlers(socket: Socket) {
       });
     },
   );
+
+  // DISCONNECT (tab close / crash / network drop) — leave_room is never
+  // emitted in this path, so clean up SFU + participant state here too.
+  socket.on('disconnect', async () => {
+    const roomCodes = [...socket.rooms].filter((room) => room !== socket.id);
+
+    for (const roomCode of roomCodes) {
+      try {
+        const participant = await prisma.participant.findFirst({
+          where: { socketId: socket.id },
+        });
+        if (!participant) continue;
+
+        const room = await prisma.room.findUnique({ where: { roomCode } });
+        if (!room) continue;
+
+        const deletedParticipant = await prisma.participant.delete({
+          where: {
+            roomId_userId: { roomId: room.id, userId: participant.userId },
+          },
+        });
+
+        await cleanupParticipant(socket, roomCode, room.id, deletedParticipant);
+      } catch (err) {
+        console.error(
+          '[disconnect] cleanup failed for room %s: %o',
+          roomCode,
+          err,
+        );
+      }
+    }
+  });
 }
