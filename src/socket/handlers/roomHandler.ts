@@ -31,39 +31,41 @@ async function cleanupParticipant(
 
   removePeerSfu(roomCode, socket.id);
 
-  if (deletedParticipant.isHost) {
-    const timestamp = getCurrentTimestamp(roomCode);
-    socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
-
-    if (participants.length > 0) {
-      const newHost = participants[0];
-
-      await prisma.participant.update({
-        where: { roomId_userId: { roomId, userId: newHost.userId } },
-        data: { isHost: true },
-      });
-
-      await prisma.room.update({
-        where: { id: roomId },
-        data: { hostId: newHost.userId },
-      });
-
-      socket.to(roomCode).emit(events.HOST_CHANGED, {
-        hostId: newHost.userId,
-        hostName: newHost.userName,
-      });
-    }
-  }
-
   if (participants.length === 0) {
     evictRoom(roomCode);
     evictRoomSfu(roomCode);
     prisma.room.delete({ where: { roomCode } });
-  } else if (!deletedParticipant.isHost) {
-    socket.to(roomCode).emit(events.USER_LEFT, {
-      userId: deletedParticipant.userId,
-      userName: deletedParticipant.userName,
-      participants,
+    return;
+  }
+
+  // Always broadcast the refreshed participants list, whether the
+  // departing user was a regular participant or the host.
+  socket.to(roomCode).emit(events.USER_LEFT, {
+    userId: deletedParticipant.userId,
+    userName: deletedParticipant.userName,
+    isHost: deletedParticipant.isHost,
+    participants,
+  });
+
+  if (deletedParticipant.isHost) {
+    const timestamp = getCurrentTimestamp(roomCode);
+    socket.to(roomCode).emit(events.VIDEO_PAUSE, { roomCode, timestamp });
+
+    const newHost = participants[0];
+
+    await prisma.participant.update({
+      where: { roomId_userId: { roomId, userId: newHost.userId } },
+      data: { isHost: true },
+    });
+
+    await prisma.room.update({
+      where: { id: roomId },
+      data: { hostId: newHost.userId },
+    });
+
+    socket.to(roomCode).emit(events.HOST_CHANGED, {
+      hostId: newHost.userId,
+      hostName: newHost.userName,
     });
   }
 }

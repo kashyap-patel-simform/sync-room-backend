@@ -66,7 +66,10 @@ export async function initMediasoupWorker(): Promise<types.Worker> {
   });
 
   worker.on('died', () => {
-    console.error('mediasoup worker died, exiting process (pid:%d)', worker.pid);
+    console.error(
+      'mediasoup worker died, exiting process (pid:%d)',
+      worker.pid,
+    );
     process.exit(1);
   });
 
