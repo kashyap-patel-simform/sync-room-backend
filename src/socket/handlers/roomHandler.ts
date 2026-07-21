@@ -354,6 +354,37 @@ export function registerRoomHandlers(socket: Socket) {
     },
   );
 
+  // REACTION — ephemeral, no persistence, no ack. Broadcast to the whole
+  // room (including the sender) so the animation timing is identical for
+  // everyone, sender included.
+  socket.on(
+    events.SEND_REACTION_IN,
+    async ({
+      roomCode,
+      userId,
+      emoji,
+    }: {
+      roomCode: string;
+      userId: string;
+      emoji: string;
+    }) => {
+      if (!roomCode || !userId || !emoji) return;
+
+      const roomId = await resolveRoomId(roomCode);
+      if (!roomId) return;
+
+      const payload = {
+        id: `${userId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        userId,
+        emoji,
+        timestamp: Date.now(),
+      };
+
+      socket.emit(events.REACTION_RECEIVED, payload);
+      socket.to(roomCode).emit(events.REACTION_RECEIVED, payload);
+    },
+  );
+
   // DISCONNECT (tab close / crash / network drop) — leave_room is never
   // emitted in this path, so clean up SFU + participant state here too.
   socket.on('disconnect', async () => {

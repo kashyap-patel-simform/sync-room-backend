@@ -19,6 +19,10 @@ export const events = {
 
   SYNC_TICK: 'sync_tick',
 
+  // Reactions
+  SEND_REACTION_IN: 'send_reaction',
+  REACTION_RECEIVED: 'reaction_received',
+
   // SFU (mediasoup) signaling — request/response, ack-callback style
   GET_RTP_CAPABILITIES: 'get_rtp_capabilities',
   GET_PRODUCERS: 'get_producers',
