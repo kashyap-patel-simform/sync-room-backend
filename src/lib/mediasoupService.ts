@@ -49,9 +49,9 @@ export const webRtcTransportOptions: types.WebRtcTransportOptions = {
       announcedIp,
     },
   ],
-  enableUdp: true,
+  enableUdp: false,
   enableTcp: true,
-  preferUdp: true,
+  preferUdp: false,
   initialAvailableOutgoingBitrate: 800000,
 };
 
